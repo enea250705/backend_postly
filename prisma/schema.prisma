@@ -3,8 +3,8 @@
 
 generator client {
   provider      = "prisma-client-js"
-  // native = local dev (Windows on your machine); debian targets cover Render's runners.
-  binaryTargets = ["native", "debian-openssl-3.0.x", "debian-openssl-1.1.x"]
+  // native = local dev (Windows on your machine); debian-openssl-3.0.x = Render's runners.
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
 }
 
 datasource db {
