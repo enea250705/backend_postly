@@ -1,0 +1,91 @@
+# Render Blueprint for the backend-only repo (https://github.com/enea250705/backend_postly).
+# Push the contents of /backend as the root of that repo, then point Render at it.
+
+databases:
+  - name: postly-db
+    plan: free          # 90-day free tier; upgrade to "starter" ($7/mo) for production
+    databaseName: postly
+    user: postly
+
+services:
+  - type: web
+    name: postly-backend
+    runtime: node
+    plan: free
+    buildCommand: npm install && npx prisma generate && npm run build
+    # `prisma db push` applies schema.prisma directly — no migration history needed.
+    # Switch to `prisma migrate deploy` once you start managing migrations properly.
+    startCommand: npx prisma db push --accept-data-loss && node dist/index.js
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 4000
+      - key: DATABASE_URL
+        fromDatabase:
+          name: postly-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 15m
+      - key: JWT_REFRESH_EXPIRES_IN
+        value: 30d
+      - key: AI_MODEL
+        value: claude-sonnet-4-6
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: FRONTEND_ORIGIN
+        sync: false
+      - key: RATE_LIMIT_WINDOW_MS
+        value: 60000
+      - key: RATE_LIMIT_MAX
+        value: 120
+
+      # --- platform OAuth (leave blank, fill in as you obtain each one) ---
+      - key: TWITTER_CLIENT_ID
+        sync: false
+      - key: TWITTER_CLIENT_SECRET
+        sync: false
+      - key: INSTAGRAM_CLIENT_ID
+        sync: false
+      - key: INSTAGRAM_CLIENT_SECRET
+        sync: false
+      - key: INSTAGRAM_BUSINESS_ID
+        sync: false
+      - key: TIKTOK_CLIENT_KEY
+        sync: false
+      - key: TIKTOK_CLIENT_SECRET
+        sync: false
+      - key: YOUTUBE_CLIENT_ID
+        sync: false
+      - key: YOUTUBE_CLIENT_SECRET
+        sync: false
+      - key: LINKEDIN_CLIENT_ID
+        sync: false
+      - key: LINKEDIN_CLIENT_SECRET
+        sync: false
+      - key: LINKEDIN_PERSON_URN
+        sync: false
+      - key: FACEBOOK_CLIENT_ID
+        sync: false
+      - key: FACEBOOK_CLIENT_SECRET
+        sync: false
+      - key: FACEBOOK_PAGE_ID
+        sync: false
+      - key: THREADS_CLIENT_ID
+        sync: false
+      - key: THREADS_CLIENT_SECRET
+        sync: false
+      - key: THREADS_USER_ID
+        sync: false
+      - key: PINTEREST_CLIENT_ID
+        sync: false
+      - key: PINTEREST_CLIENT_SECRET
+        sync: false
+      - key: PINTEREST_BOARD_ID
+        sync: false

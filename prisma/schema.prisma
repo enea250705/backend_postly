@@ -1,0 +1,319 @@
+// Postly data model.
+// Designed so every feature in the spec maps to concrete tables.
+
+generator client {
+  provider      = "prisma-client-js"
+  // native = local dev (Windows on your machine); debian targets cover Render's runners.
+  binaryTargets = ["native", "debian-openssl-3.0.x", "debian-openssl-1.1.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// -------------------- USERS & BILLING --------------------
+
+enum Plan {
+  FREE
+  CREATOR
+  PRO
+}
+
+model User {
+  id              String   @id @default(cuid())
+  email           String   @unique
+  passwordHash    String
+  displayName     String?
+  niche           String?
+  goals           String?
+  tone            String?
+  plan            Plan     @default(FREE)
+  aiCreditsUsed   Int      @default(0)
+  aiCreditsReset  DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  accounts        SocialAccount[]
+  posts           Post[]
+  contentDrafts   ContentDraft[]
+  analyticsRuns   AnalyticsRun[]
+  growthInsights  GrowthInsight[]
+  inboxRules      InboxRule[]
+  conversations   Conversation[]
+  monetizeIdeas   MonetizationIdea[]
+  refreshTokens   RefreshToken[]
+}
+
+model RefreshToken {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String   @unique
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
+}
+
+// -------------------- SOCIAL ACCOUNTS --------------------
+
+enum Platform {
+  TWITTER
+  INSTAGRAM
+  TIKTOK
+  YOUTUBE
+  LINKEDIN
+  FACEBOOK
+  THREADS
+  PINTEREST
+}
+
+model SocialAccount {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  platform      Platform
+  handle        String
+  externalId    String?
+  accessToken   String   // encrypted at rest in production
+  refreshToken  String?
+  tokenExpires  DateTime?
+  scopes        String?
+  connectedAt   DateTime @default(now())
+  isActive      Boolean  @default(true)
+
+  posts         Post[]
+  metrics       AccountMetric[]
+
+  @@unique([userId, platform, handle])
+  @@index([userId])
+}
+
+model AccountMetric {
+  id           String   @id @default(cuid())
+  accountId    String
+  account      SocialAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  capturedAt   DateTime @default(now())
+  followers    Int
+  following    Int
+  posts        Int
+  engagementRate Float?
+
+  @@index([accountId, capturedAt])
+}
+
+// -------------------- CONTENT --------------------
+
+enum PostStatus {
+  DRAFT
+  SCHEDULED
+  PUBLISHING
+  PUBLISHED
+  FAILED
+}
+
+enum ContentFormat {
+  REEL
+  TIKTOK
+  SHORT
+  CAROUSEL
+  THREAD
+  TWEET
+  POST
+  STORY
+  PIN
+}
+
+model Post {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accountId     String?
+  account       SocialAccount? @relation(fields: [accountId], references: [id])
+  platform      Platform
+  format        ContentFormat
+  hook          String?
+  caption       String   @db.Text
+  cta           String?
+  hashtags      String?
+  mediaUrls     String[] @default([])
+  status        PostStatus @default(DRAFT)
+  scheduledAt   DateTime?
+  publishedAt   DateTime?
+  externalPostId String?
+  failureReason String?
+  // AI-side metadata that fuels explainability
+  generatedBy   String?  // "ai" | "user" | "repurpose"
+  parentPostId  String?  // when repurposed from another post
+  parentPost    Post?    @relation("Repurpose", fields: [parentPostId], references: [id])
+  children      Post[]   @relation("Repurpose")
+
+  metrics       PostMetric[]
+  explanations  PostExplanation[]
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([userId, status])
+  @@index([scheduledAt])
+}
+
+model PostMetric {
+  id           String   @id @default(cuid())
+  postId       String
+  post         Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  capturedAt   DateTime @default(now())
+  views        Int      @default(0)
+  likes        Int      @default(0)
+  comments     Int      @default(0)
+  shares       Int      @default(0)
+  saves        Int      @default(0)
+  reach        Int      @default(0)
+  retention    Float?
+  clickThrough Float?
+
+  @@index([postId, capturedAt])
+}
+
+model PostExplanation {
+  id          String   @id @default(cuid())
+  postId      String
+  post        Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  // AI-generated narrative + structured insights
+  summary     String   @db.Text
+  positives   String[] @default([])
+  negatives   String[] @default([])
+  patterns    String[] @default([])
+  hookScore   Float?   // 0-100
+  retentionLift Float?  // delta vs baseline
+  createdAt   DateTime @default(now())
+
+  @@index([postId])
+}
+
+// AI generation audit log — also feeds the credit meter
+model ContentDraft {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  niche       String?
+  prompt      String   @db.Text
+  kind        String   // "hook" | "caption" | "repurpose" | "monetize" | ...
+  variations  Json     // [{text, score, ...}]
+  model       String
+  tokensUsed  Int?
+  createdAt   DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
+
+// -------------------- AUTO-GROWTH ENGINE --------------------
+
+model AnalyticsRun {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  windowStart DateTime
+  windowEnd   DateTime
+  // Aggregates across the window
+  totalPosts  Int
+  avgEngagement Float
+  topPostId   String?
+  bestHourUTC Int?     // 0-23
+  bestDOW     Int?     // 0-6
+  insights    Json     // structured findings
+  createdAt   DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
+
+model GrowthInsight {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind         String   // "next-post" | "best-time" | "format-shift" | ...
+  title        String
+  body         String   @db.Text
+  recommendedAt DateTime?
+  recommendedFormat ContentFormat?
+  recommendedPlatform Platform?
+  confidence   Float    // 0-1
+  consumed     Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  @@index([userId, consumed])
+}
+
+// -------------------- INBOX (auto-reply + DM) --------------------
+
+enum ConversationKind {
+  COMMENT
+  DM
+}
+
+model InboxRule {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  platform    Platform?
+  matchType   String   // "keyword" | "intent" | "any"
+  match       String   // keyword or intent label
+  responseTpl String   @db.Text
+  funnelLink  String?
+  enabled     Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+}
+
+model Conversation {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  platform     Platform
+  kind         ConversationKind
+  externalId   String   // platform-side id
+  participant  String
+  lastMessage  String   @db.Text
+  lastIntent   String?
+  funnelStage  String?  // "awareness" | "interest" | "decision" | "won" | "lost"
+  autoReplied  Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  messages     Message[]
+
+  @@index([userId, platform])
+}
+
+model Message {
+  id            String   @id @default(cuid())
+  conversationId String
+  conversation  Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  fromUser      Boolean
+  body          String   @db.Text
+  intent        String?
+  createdAt     DateTime @default(now())
+
+  @@index([conversationId, createdAt])
+}
+
+// -------------------- MONETIZATION --------------------
+
+model MonetizationIdea {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  niche        String
+  productType  String   // "ebook" | "course" | "template" | "coaching" | ...
+  title        String
+  pitch        String   @db.Text
+  audience     String   @db.Text
+  pricingHint  String?
+  landingCopy  String?  @db.Text
+  createdAt    DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
